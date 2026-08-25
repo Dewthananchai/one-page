@@ -219,27 +219,9 @@ async function resizeImage(file, maxW = 1400, quality = 0.85) {
   });
 }
 
-function Seal() {
-  return (
-    <div style={sealStyle}>
-      <svg viewBox="0 0 120 120" width="72" height="72">
-        <circle cx="60" cy="60" r="56" fill="none" stroke="#B8922F" strokeWidth="2.5" />
-        <circle cx="60" cy="60" r="47" fill="none" stroke="#B8922F" strokeWidth="1" />
-        <path id="circlePath2" d="M 60,60 m -47,0 a 47,47 0 1,1 94,0 a 47,47 0 1,1 -94,0" fill="none" />
-        <text fontSize="8.5" fill="#B8922F" fontFamily="Kanit, sans-serif" letterSpacing="1.2">
-          <textPath href="#circlePath2" startOffset="2%">
-            รายงานผลการปฏิบัติงาน • ONE PAGE REPORT •
-          </textPath>
-        </text>
-        <text x="60" y="65" textAnchor="middle" fontSize="18" fontFamily="Kanit, sans-serif" fill="#B8922F" fontWeight="700">
-          ✓
-        </text>
-      </svg>
-    </div>
-  );
-}
 
-const sealStyle = { flexShrink: 0, opacity: 0.85 };
+
+
 
 /* ================= SUPABASE SETUP SCREEN ================= */
 function SupabaseSetup({ initial, onSaved }) {
@@ -1061,7 +1043,6 @@ function PreviewPage({ report, onPrint, onExportPdf, exportingPdf, onExportImage
                 </div>
               </div>
             )}
-            <Seal />
           </div>
         )}
 
