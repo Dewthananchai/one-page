@@ -906,7 +906,7 @@ function PreviewPage({ report, onPrint, onExportPdf, exportingPdf, onExportImage
         <div style={headerBarStyle}>
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
             {report.logo ? (
-              <img src={report.logo} alt="logo" style={{ ...headerLogoStyle, background: "transparent" }} />
+              <img src={report.logo} alt="logo" style={{ ...headerLogoStyle, background: "transparent", mixBlendMode: "screen" }} />
             ) : (
               <div style={{ ...headerLogoStyle, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent" }}>
                 <ImageIcon size={36} color="#B8922F" />
