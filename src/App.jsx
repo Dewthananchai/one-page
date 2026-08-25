@@ -720,7 +720,7 @@ function EditorView({ report, onChange, onBack, onSave, onPrint, saving }) {
             <Field label="ตราสัญลักษณ์ / โลโก้หน่วยงาน">
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 {report.logo ? (
-                  <img src={report.logo} alt="logo" style={{ width: 46, height: 46, borderRadius: 8, objectFit: "cover", border: "1px solid #E8E2D3" }} />
+                  <img src={report.logo} alt="logo" style={{ width: 46, height: 46, borderRadius: 8, objectFit: "contain", border: "none", background: "transparent" }} />
                 ) : (
                   <div style={{ width: 46, height: 46, borderRadius: 8, background: "#F0EBDD", display: "flex", alignItems: "center", justifyContent: "center" }}>
                     <ImageIcon size={18} color="#B8922F" />
@@ -924,9 +924,9 @@ function PreviewPage({ report, onPrint, onExportPdf, exportingPdf, onExportImage
         <div style={headerBarStyle}>
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
             {report.logo ? (
-              <img src={report.logo} alt="logo" style={headerLogoStyle} />
+              <img src={report.logo} alt="logo" style={{ ...headerLogoStyle, background: "transparent" }} />
             ) : (
-              <div style={{ ...headerLogoStyle, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(255,255,255,0.1)" }}>
+              <div style={{ ...headerLogoStyle, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent" }}>
                 <ImageIcon size={36} color="#B8922F" />
               </div>
             )}
@@ -1103,7 +1103,7 @@ const headerBarStyle = {
   padding: "20px 22px", gap: 16,
   borderBottom: "4px solid #B8922F",
 };
-const headerLogoStyle = { width: 80, height: 80, borderRadius: 8, objectFit: "contain", flexShrink: 0 };
+const headerLogoStyle = { width: 80, height: 80, borderRadius: 8, objectFit: "contain", flexShrink: 0, background: "transparent" };
 const headerInfoBoxStyle = { display: "flex", flexDirection: "column", gap: 5, flexShrink: 0 };
 const headerInfoRow = { display: "flex", alignItems: "center", gap: 7, fontFamily: "Sarabun", fontSize: 10, color: "#FFFFFF", whiteSpace: "nowrap" };
 const contentPad = { padding: "16px 18px 0", flex: 1 };
