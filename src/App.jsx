@@ -716,7 +716,7 @@ function EditorView({ report, onChange, onBack, onSave, onPrint, saving }) {
             <Field label="ลายเซ็นผู้รายงาน">
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 {report.signature ? (
-                  <img src={report.signature} alt="signature" style={{ height: 40, objectFit: "contain", border: "1px solid #E8E2D3", borderRadius: 6, padding: 4 }} />
+                  <img src={report.signature} alt="signature" style={{ height: 40, objectFit: "contain", border: "none", borderRadius: 6, padding: 4, background: "transparent", mixBlendMode: "screen" }} />
                 ) : (
                   <div style={{ height: 40, width: 80, borderRadius: 6, background: "#F0EBDD", display: "flex", alignItems: "center", justifyContent: "center" }}>
                     <ImageIcon size={16} color="#B8922F" />
@@ -1033,7 +1033,7 @@ function PreviewPage({ report, onPrint, onExportPdf, exportingPdf, onExportImage
               <div style={{ flex: 1, textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center" }}>
                 <div style={{ fontFamily: "Kanit", fontWeight: 600, fontSize: 12, color: "#1B2A45", marginBottom: 12 }}>ลงชื่อผู้รายงาน</div>
                 {report.signature ? (
-                  <img src={report.signature} alt="signature" style={{ height: 45, objectFit: "contain", marginBottom: 6 }} />
+                  <img src={report.signature} alt="signature" style={{ height: 45, objectFit: "contain", marginBottom: 6, background: "transparent", mixBlendMode: "screen" }} />
                 ) : (
                   <div style={{ height: 45 }} />
                 )}
