@@ -162,6 +162,461 @@ async function sbTestConnection(config) {
   }
 }
 
+/* ================= TEAM FUNCTIONS ================= */
+const USER_KEY = "user-name";
+
+function getUserName() {
+  return localStorage.getItem(USER_KEY) || '';
+}
+
+function setUserName(name) {
+  localStorage.setItem(USER_KEY, name);
+}
+
+// สร้างทีมใหม่
+async function sbCreateTeam(config, name) {
+  const userId = getUserName() || uid();
+  const teamId = uid();
+  
+  // สร้างทีม
+  const teamUrl = `${config.url}/rest/v1/teams`;
+  const teamRes = await fetch(teamUrl, {
+    method: 'POST',
+    headers: sbHeaders(config, { Prefer: 'return=representation' }),
+    body: JSON.stringify({ id: teamId, name, owner_id: userId })
+  });
+  if (!teamRes.ok) throw new Error('สร้างทีมไม่สำเร็จ');
+  
+  // เพิ่มตัวเองเป็นสมาชิก
+  const memberUrl = `${config.url}/rest/v1/team_members`;
+  const memberRes = await fetch(memberUrl, {
+    method: 'POST',
+    headers: sbHeaders(config),
+    body: JSON.stringify({ id: uid(), team_id: teamId, user_name: userId, role: 'owner' })
+  });
+  if (!memberRes.ok) throw new Error('เพิ่มสมาชิกไม่สำเร็จ');
+  
+  return { id: teamId, name, owner_id: userId };
+}
+
+// ดึงรายการทีมที่เป็นสมาชิก
+async function sbListMyTeams(config) {
+  const userName = getUserName();
+  if (!userName) return [];
+  
+  const url = `${config.url}/rest/v1/team_members?user_name=eq.${encodeURIComponent(userName)}&select=team_id,role,teams(id,name,owner_id)`;
+  const res = await fetch(url, { headers: sbHeaders(config) });
+  if (!res.ok) return [];
+  const rows = await res.json();
+  return rows.map(r => ({ ...r.teams, memberRole: r.role })).filter(t => t.id);
+}
+
+// ดึงสมาชิกในทีม
+async function sbListTeamMembers(config, teamId) {
+  const url = `${config.url}/rest/v1/team_members?team_id=eq.${teamId}&select=id,user_name,role,joined_at`;
+  const res = await fetch(url, { headers: sbHeaders(config) });
+  if (!res.ok) return [];
+  return res.json();
+}
+
+// สร้างโค้ดเชิญ
+async function sbCreateInvitation(config, teamId) {
+  const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+  const url = `${config.url}/rest/v1/invitations`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: sbHeaders(config, { Prefer: 'return=representation' }),
+    body: JSON.stringify({
+      id: uid(),
+      team_id: teamId,
+      code,
+      created_by: getUserName(),
+      expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString() // 7 วัน
+    })
+  });
+  if (!res.ok) throw new Error('สร้างโค้ดเชิญไม่สำเร็จ');
+  const rows = await res.json();
+  return rows[0];
+}
+
+// ใช้โค้ดเชิญเข้าทีม
+async function sbJoinWithCode(config, code) {
+  const userName = getUserName();
+  if (!userName) throw new Error('กรุณาตั้งชื่อก่อน');
+  
+  // หาโค้ดเชิญ
+  const url = `${config.url}/rest/v1/invitations?code=eq.${code}&used=eq.false`;
+  const res = await fetch(url, { headers: sbHeaders(config) });
+  if (!res.ok) throw new Error('ค้นหาโค้ดเชิญไม่สำเร็จ');
+  const rows = await res.json();
+  
+  if (rows.length === 0) throw new Error('โค้ดเชิญไม่ถูกต้องหรือใช้ไปแล้ว');
+  
+  const invite = rows[0];
+  
+  // ตรวจสอบหมดอายุ
+  if (invite.expires_at && new Date(invite.expires_at) < new Date()) {
+    throw new Error('โค้ดเชิญหมดอายุแล้ว');
+  }
+  
+  // ตรวจสอบว่าเป็นสมาชิกอยู่แล้ว
+  const checkUrl = `${config.url}/rest/v1/team_members?team_id=eq.${invite.team_id}&user_name=eq.${userName}`;
+  const checkRes = await fetch(checkUrl, { headers: sbHeaders(config) });
+  const existing = await checkRes.json();
+  if (existing.length > 0) throw new Error('คุณเป็นสมาชิกทีมนี้อยู่แล้ว');
+  
+  // เข้าร่วมทีม
+  const joinUrl = `${config.url}/rest/v1/team_members`;
+  const joinRes = await fetch(joinUrl, {
+    method: 'POST',
+    headers: sbHeaders(config),
+    body: JSON.stringify({ id: uid(), team_id: invite.team_id, user_name: userName, role: 'member' })
+  });
+  if (!joinRes.ok) throw new Error('เข้าร่วมทีมไม่สำเร็จ');
+  
+  // ทำเครื่องหมายว่าใช้โค้ดแล้ว
+  const updateUrl = `${config.url}/rest/v1/invitations?id=eq.${invite.id}`;
+  await fetch(updateUrl, {
+    method: 'PATCH',
+    headers: sbHeaders(config),
+    body: JSON.stringify({ used: true })
+  });
+  
+  return invite.team_id;
+}
+
+// ลบสมาชิกออกจากทีม
+async function sbRemoveMember(config, memberId) {
+  const url = `${config.url}/rest/v1/team_members?id=eq.${memberId}`;
+  const res = await fetch(url, { method: 'DELETE', headers: sbHeaders(config) });
+  if (!res.ok) throw new Error('ลบสมาชิกไม่สำเร็จ');
+}
+
+// ลบทีม
+async function sbDeleteTeam(config, teamId) {
+  const url = `${config.url}/rest/v1/teams?id=eq.${teamId}`;
+  const res = await fetch(url, { method: 'DELETE', headers: sbHeaders(config) });
+  if (!res.ok) throw new Error('ลบทีมไม่สำเร็จ');
+}
+
+/* ================= TEAM MANAGEMENT ================= */
+function TeamManagement({ config, onBack }) {
+  const [teams, setTeams] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showCreate, setShowCreate] = useState(false);
+  const [showJoin, setShowJoin] = useState(false);
+  const [newTeamName, setNewTeamName] = useState('');
+  const [joinCode, setJoinCode] = useState('');
+  const [selectedTeam, setSelectedTeam] = useState(null);
+  const [members, setMembers] = useState([]);
+  const [invitations, setInvitations] = useState([]);
+  const [userName, setUserNameState] = useState(getUserName());
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+
+  useEffect(() => {
+    loadTeams();
+  }, [config]);
+
+  const loadTeams = async () => {
+    setLoading(true);
+    try {
+      const myTeams = await sbListMyTeams(config);
+      setTeams(myTeams);
+    } catch (e) {
+      console.error(e);
+    }
+    setLoading(false);
+  };
+
+  const loadMembers = async (teamId) => {
+    try {
+      const m = await sbListTeamMembers(config, teamId);
+      setMembers(m);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleSetUserName = () => {
+    if (!userName.trim()) {
+      setError('กรุณากรอกชื่อ');
+      return;
+    }
+    setUserName(userName.trim());
+    setSuccess('ตั้งชื่อสำเร็จ');
+    setError('');
+    setTimeout(() => setSuccess(''), 2000);
+  };
+
+  const handleCreateTeam = async () => {
+    if (!newTeamName.trim()) {
+      setError('กรุณากรอกชื่อทีม');
+      return;
+    }
+    if (!getUserName()) {
+      setError('กรุณาตั้งชื่อก่อนสร้างทีม');
+      return;
+    }
+    try {
+      await sbCreateTeam(config, newTeamName.trim());
+      setNewTeamName('');
+      setShowCreate(false);
+      setSuccess('สร้างทีมสำเร็จ!');
+      setError('');
+      loadTeams();
+      setTimeout(() => setSuccess(''), 2000);
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const handleJoinTeam = async () => {
+    if (!joinCode.trim()) {
+      setError('กรุณากรอกโค้ดเชิญ');
+      return;
+    }
+    if (!getUserName()) {
+      setError('กรุณาตั้งชื่อก่อนเข้าร่วมทีม');
+      return;
+    }
+    try {
+      await sbJoinWithCode(config, joinCode.trim().toUpperCase());
+      setJoinCode('');
+      setShowJoin(false);
+      setSuccess('เข้าร่วมทีมสำเร็จ!');
+      setError('');
+      loadTeams();
+      setTimeout(() => setSuccess(''), 2000);
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const handleCreateInvite = async (teamId) => {
+    try {
+      const invite = await sbCreateInvitation(config, teamId);
+      setInvitations([...invitations, invite]);
+      setSuccess(`โค้ดเชิญ: ${invite.code}`);
+      setError('');
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const handleRemoveMember = async (memberId) => {
+    if (!confirm('ลบสมาชิกนี้ออกจากทีม?')) return;
+    try {
+      await sbRemoveMember(config, memberId);
+      if (selectedTeam) loadMembers(selectedTeam.id);
+      setSuccess('ลบสมาชิกสำเร็จ');
+      setError('');
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const copyToClipboard = (text) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setSuccess('คัดลอกแล้ว!');
+      setTimeout(() => setSuccess(''), 2000);
+    });
+  };
+
+  return (
+    <div style={{ minHeight: '100vh', background: '#F7F5EF', padding: '20px 16px' }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
+        <button onClick={onBack} style={{ background: 'none', border: 'none', padding: 8, cursor: 'pointer' }}>
+          <ArrowLeft size={20} color="#1B2A45" />
+        </button>
+        <div>
+          <div style={{ fontFamily: 'Kanit', fontWeight: 700, fontSize: 20, color: '#1B2A45' }}>จัดการทีม</div>
+          <div style={{ fontFamily: 'Sarabun', fontSize: 12.5, color: '#55606E' }}>เชิญเพื่อนเข้าร่วมทีมเพื่อทำงานร่วมกัน</div>
+        </div>
+      </div>
+
+      {/* Messages */}
+      {error && (
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', background: '#FCEEEA', color: '#A6402C', borderRadius: 8, padding: '10px 12px', marginBottom: 12, fontFamily: 'Sarabun', fontSize: 13 }}>
+          <AlertTriangle size={16} />
+          <span>{error}</span>
+        </div>
+      )}
+      {success && (
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', background: '#E8F5E9', color: '#2E7D32', borderRadius: 8, padding: '10px 12px', marginBottom: 12, fontFamily: 'Sarabun', fontSize: 13 }}>
+          <Check size={16} />
+          <span>{success}</span>
+        </div>
+      )}
+
+      {/* User Name Setting */}
+      <div style={{ background: '#FFFFFF', borderRadius: 12, padding: 16, marginBottom: 16, border: '1px solid #E8E2D3' }}>
+        <div style={{ fontFamily: 'Kanit', fontWeight: 600, fontSize: 14, color: '#1B2A45', marginBottom: 10 }}>
+          <User size={16} style={{ marginRight: 6, verticalAlign: 'middle' }} />
+          ชื่อของคุณ (สำหรับระบุตัวตนในทีม)
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input
+            style={{ ...inputStyle, flex: 1 }}
+            value={userName}
+            onChange={(e) => setUserNameState(e.target.value)}
+            placeholder="กรอกชื่อ-นามสกุล หรือ ชื่อเล่น"
+          />
+          <button onClick={handleSetUserName} style={{ ...addBtnStyle, background: '#1B2A45', color: '#FFFFFF' }}>
+            <Check size={14} /> บันทึก
+          </button>
+        </div>
+      </div>
+
+      {/* Action Buttons */}
+      <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
+        <button onClick={() => { setShowCreate(true); setShowJoin(false); }} style={{ ...addBtnStyle, flex: 1, justifyContent: 'center', background: '#1B2A45', color: '#FFFFFF', padding: '12px' }}>
+          <Plus size={16} /> สร้างทีมใหม่
+        </button>
+        <button onClick={() => { setShowJoin(true); setShowCreate(false); }} style={{ ...addBtnStyle, flex: 1, justifyContent: 'center', background: '#B8922F', color: '#FFFFFF', padding: '12px' }}>
+          <Users size={16} /> เข้าร่วมทีม
+        </button>
+      </div>
+
+      {/* Create Team Form */}
+      {showCreate && (
+        <div style={{ background: '#FFFFFF', borderRadius: 12, padding: 16, marginBottom: 16, border: '1px solid #E8E2D3' }}>
+          <div style={{ fontFamily: 'Kanit', fontWeight: 600, fontSize: 14, color: '#1B2A45', marginBottom: 10 }}>สร้างทีมใหม่</div>
+          <input
+            style={inputStyle}
+            value={newTeamName}
+            onChange={(e) => setNewTeamName(e.target.value)}
+            placeholder="ชื่อทีม เช่น กลุ่มงานตรวจราชการ"
+          />
+          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+            <button onClick={handleCreateTeam} style={{ ...addBtnStyle, flex: 1, justifyContent: 'center', background: '#2E7D32', color: '#FFFFFF' }}>
+              <Check size={14} /> สร้างทีม
+            </button>
+            <button onClick={() => setShowCreate(false)} style={{ ...addBtnStyle, flex: 1, justifyContent: 'center' }}>
+              <X size={14} /> ยกเลิก
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Join Team Form */}
+      {showJoin && (
+        <div style={{ background: '#FFFFFF', borderRadius: 12, padding: 16, marginBottom: 16, border: '1px solid #E8E2D3' }}>
+          <div style={{ fontFamily: 'Kanit', fontWeight: 600, fontSize: 14, color: '#1B2A45', marginBottom: 10 }}>เข้าร่วมทีมด้วยโค้ดเชิญ</div>
+          <input
+            style={{ ...inputStyle, textTransform: 'uppercase', letterSpacing: 2, textAlign: 'center', fontSize: 18, fontWeight: 'bold' }}
+            value={joinCode}
+            onChange={(e) => setJoinCode(e.target.value)}
+            placeholder="กรอกโค้ด 6 ตัวอักษร"
+            maxLength={6}
+          />
+          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+            <button onClick={handleJoinTeam} style={{ ...addBtnStyle, flex: 1, justifyContent: 'center', background: '#2E7D32', color: '#FFFFFF' }}>
+              <Check size={14} /> เข้าร่วม
+            </button>
+            <button onClick={() => setShowJoin(false)} style={{ ...addBtnStyle, flex: 1, justifyContent: 'center' }}>
+              <X size={14} /> ยกเลิก
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Teams List */}
+      <div style={{ fontFamily: 'Kanit', fontWeight: 600, fontSize: 14, color: '#1B2A45', marginBottom: 10 }}>
+        ทีมของฉัน ({teams.length})
+      </div>
+
+      {loading ? (
+        <div style={{ display: 'flex', justifyContent: 'center', padding: 30 }}>
+          <Loader2 className="spin" size={24} color="#B8922F" />
+        </div>
+      ) : teams.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: '30px 20px', background: '#FFFFFF', borderRadius: 12, border: '1px dashed #DCD5C4' }}>
+          <Users size={30} color="#B8922F" style={{ marginBottom: 10 }} />
+          <div style={{ fontFamily: 'Kanit', fontWeight: 600, color: '#1B2A45', fontSize: 14 }}>ยังไม่มีทีม</div>
+          <div style={{ fontFamily: 'Sarabun', fontSize: 12.5, color: '#55606E', marginTop: 4 }}>
+            สร้างทีมใหม่หรือใช้โค้ดเชิญจากเพื่อน
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {teams.map((team) => (
+            <div key={team.id} style={{ background: '#FFFFFF', borderRadius: 12, border: '1px solid #E8E2D3', overflow: 'hidden' }}>
+              <div
+                style={{ padding: '14px 14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10 }}
+                onClick={() => {
+                  if (selectedTeam?.id === team.id) {
+                    setSelectedTeam(null);
+                  } else {
+                    setSelectedTeam(team);
+                    loadMembers(team.id);
+                  }
+                }}
+              >
+                <div style={{ width: 40, height: 40, borderRadius: 10, background: team.memberRole === 'owner' ? '#1B2A45' : '#B8922F', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Users size={18} color="#FFFFFF" />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontFamily: 'Kanit', fontWeight: 600, fontSize: 15, color: '#1B2A45' }}>{team.name}</div>
+                  <div style={{ fontFamily: 'Sarabun', fontSize: 12, color: '#55606E' }}>
+                    {team.memberRole === 'owner' ? '👑 เจ้าของทีม' : '👤 สมาชิก'}
+                  </div>
+                </div>
+                <ChevronRight size={18} color="#B8B2A0" style={{ transform: selectedTeam?.id === team.id ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }} />
+              </div>
+
+              {/* Team Details */}
+              {selectedTeam?.id === team.id && (
+                <div style={{ padding: '0 14px 14px', borderTop: '1px solid #E8E2D3' }}>
+                  {/* Invite Button */}
+                  {team.memberRole === 'owner' && (
+                    <button onClick={() => handleCreateInvite(team.id)} style={{ ...addBtnStyle, width: '100%', justifyContent: 'center', marginTop: 12, background: '#E8F5E9', color: '#2E7D32' }}>
+                      <Plus size={14} /> สร้างโค้ดเชิญ
+                    </button>
+                  )}
+
+                  {/* Members List */}
+                  <div style={{ fontFamily: 'Kanit', fontWeight: 600, fontSize: 13, color: '#1B2A45', marginTop: 12, marginBottom: 8 }}>
+                    สมาชิก ({members.length})
+                  </div>
+                  {members.map((m) => (
+                    <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', borderBottom: '1px solid #F0EBDD' }}>
+                      <div style={{ width: 32, height: 32, borderRadius: '50%', background: m.role === 'owner' ? '#1B2A45' : '#E8E2D3', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <User size={14} color={m.role === 'owner' ? '#FFFFFF' : '#55606E'} />
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontFamily: 'Sarabun', fontSize: 13, fontWeight: 500, color: '#1B2A45' }}>{m.user_name}</div>
+                        <div style={{ fontFamily: 'Sarabun', fontSize: 11, color: '#55606E' }}>{m.role === 'owner' ? '👑 เจ้าของทีม' : '👤 สมาชิก'}</div>
+                      </div>
+                      {team.memberRole === 'owner' && m.role !== 'owner' && (
+                        <button onClick={() => handleRemoveMember(m.id)} style={{ background: 'none', border: 'none', color: '#A6402C', cursor: 'pointer', padding: 4 }}>
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* How to Use */}
+      <div style={{ background: '#FFFFFF', borderRadius: 12, padding: 16, marginTop: 20, border: '1px solid #E8E2D3' }}>
+        <div style={{ fontFamily: 'Kanit', fontWeight: 600, fontSize: 14, color: '#1B2A45', marginBottom: 10 }}>วิธีใช้งาน</div>
+        <div style={{ fontFamily: 'Sarabun', fontSize: 12.5, color: '#55606E', lineHeight: 1.8 }}>
+          <div>1. <strong>ตั้งชื่อ</strong>ของคุณด้านบน</div>
+          <div>2. <strong>สร้างทีมใหม่</strong> หรือ <strong>เข้าร่วมทีม</strong> ด้วยโค้ดเชิญ</div>
+          <div>3. <strong>สร้างโค้ดเชิญ</strong>แล้วส่งให้เพื่อน</div>
+          <div>4. เพื่อนนำโค้ดไปกรอกในช่อง <strong>เข้าร่วมทีม</strong></div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const emptyReport = () => ({
   id: uid(),
   unit: "",
@@ -231,16 +686,53 @@ function SupabaseSetup({ initial, onSaved }) {
   const [error, setError] = useState("");
   const [showSql, setShowSql] = useState(false);
 
-  const SQL = `create table reports (
-  id text primary key,
-  unit text,
-  period text,
-  data jsonb not null,
-  updated_at timestamptz not null default now()
+  const SQL = `-- ตารางรายงาน
+CREATE TABLE IF NOT EXISTS reports (
+  id TEXT PRIMARY KEY,
+  unit TEXT,
+  period TEXT,
+  data JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-alter table reports enable row level security;
-create policy "allow all (anon key)" on reports
-  for all using (true) with check (true);`;
+
+-- ตารางทีม
+CREATE TABLE IF NOT EXISTS teams (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  owner_id TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ตารางสมาชิกทีม
+CREATE TABLE IF NOT EXISTS team_members (
+  id TEXT PRIMARY KEY,
+  team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  user_name TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'member',
+  joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ตารางคำเชิญ
+CREATE TABLE IF NOT EXISTS invitations (
+  id TEXT PRIMARY KEY,
+  team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  code TEXT NOT NULL UNIQUE,
+  created_by TEXT NOT NULL,
+  expires_at TIMESTAMPTZ,
+  used BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- RLS policies
+ALTER TABLE reports ENABLE ROW LEVEL SECURITY;
+ALTER TABLE teams ENABLE ROW LEVEL SECURITY;
+ALTER TABLE team_members ENABLE ROW LEVEL SECURITY;
+ALTER TABLE invitations ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "allow all reports" ON reports FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "allow all teams" ON teams FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "allow all members" ON team_members FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "allow all invitations" ON invitations FOR ALL USING (true) WITH CHECK (true);`;
 
   const handleConnect = async () => {
     setError("");
@@ -308,7 +800,7 @@ create policy "allow all (anon key)" on reports
 }
 
 /* ================= LIST VIEW ================= */
-function ListView({ reports, onOpen, onNew, onDelete, loading, onOpenSettings, error }) {
+function ListView({ reports, onOpen, onNew, onDelete, loading, onOpenSettings, onOpenTeam, error }) {
   return (
     <div style={{ padding: "20px 16px 90px" }}>
       <div style={{ marginBottom: 18, display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -320,9 +812,14 @@ function ListView({ reports, onOpen, onNew, onDelete, loading, onOpenSettings, e
             บันทึกผลงาน สรุปเป็นรายงาน one-page พร้อมใช้ทุกครั้งที่ต้องส่งงาน
           </div>
         </div>
-        <button onClick={onOpenSettings} style={{ background: "none", border: "none", padding: 8, cursor: "pointer", flexShrink: 0 }} aria-label="ตั้งค่าฐานข้อมูล">
-          <Settings size={19} color="#55606E" />
-        </button>
+        <div style={{ display: "flex", gap: 4 }}>
+          <button onClick={onOpenTeam} style={{ background: "none", border: "none", padding: 8, cursor: "pointer", flexShrink: 0 }} aria-label="จัดการทีม">
+            <Users size={19} color="#1B2A45" />
+          </button>
+          <button onClick={onOpenSettings} style={{ background: "none", border: "none", padding: 8, cursor: "pointer", flexShrink: 0 }} aria-label="ตั้งค่าฐานข้อมูล">
+            <Settings size={19} color="#55606E" />
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -1145,6 +1642,7 @@ export default function ReportSystem() {
   const [saving, setSaving] = useState(false);
   const [listError, setListError] = useState("");
   const [showSettings, setShowSettings] = useState(false);
+  const [showTeam, setShowTeam] = useState(false);
   // storageOk removed - localStorage always available
 
   useEffect(() => {
@@ -1264,7 +1762,9 @@ export default function ReportSystem() {
   return (
     <div style={wrapperStyle}>
       {globalStyle}
-      {openId && current ? (
+      {showTeam ? (
+        <TeamManagement config={config} onBack={() => setShowTeam(false)} />
+      ) : openId && current ? (
         <EditorView
           report={current}
           onChange={setCurrent}
@@ -1281,6 +1781,7 @@ export default function ReportSystem() {
           onDelete={deleteReport}
           loading={loading}
           onOpenSettings={() => setShowSettings(true)}
+          onOpenTeam={() => setShowTeam(true)}
           error={listError}
         />
       )}
